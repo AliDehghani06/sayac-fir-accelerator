@@ -117,7 +117,7 @@ public:
         bus->t_rd[2](t_rd[2]);
         bus->t_ready[2](t_ready[2]);
         bus->startAddress[2] = 0x0000; //MMLocation
-        bus->sizeAddress[2] = 0x8000; //MMSize
+        bus->sizeAddress[2] = 0xC000; //MMSize (49152 words: enough for the 0.5x upsample output, 2N-1 = 44099 words for N=22050 samples, plus margin)
 
         // MMA
         mma = new MatMulAcc<N>("mma");
@@ -136,7 +136,7 @@ public:
         mma->t_wr(t_wr[0]);
         mma->t_rd(t_rd[0]);
         mma->t_ready(t_ready[0]);
-        // Starting at 0x8000
+        // Starting at 0xC000 (right after RAM, which now ends at 0xBFFF)
         bus->t_cs[0](t_cs[0]);
         bus->t_addr[0](t_addr[0]);
         bus->t_in[0](t_in[0]);
@@ -145,7 +145,7 @@ public:
         bus->t_rd[0](t_rd[0]);
         bus->t_ready[0](t_ready[0]);
 
-        bus->startAddress[0] = 0x8000;
+        bus->startAddress[0] = 0xC000;
         bus->sizeAddress[0] = 8; 
 
         // DMA
@@ -173,7 +173,7 @@ public:
         dma->t_wr(t_wr[1]);
         dma->t_rd(t_rd[1]);
         dma->t_ready(t_ready[1]);
-        // Starting at 0x8008
+        // Starting at 0xC008 (right after MatMulAcc, which occupies 0xC000-0xC007)
         bus->t_cs[1](t_cs[1]);
         bus->t_addr[1](t_addr[1]);
         bus->t_in[1](t_in[1]);
@@ -182,7 +182,7 @@ public:
         bus->t_rd[1](t_rd[1]);
         bus->t_ready[1](t_ready[1]);
 
-        bus->startAddress[1] = 0x8008;
+        bus->startAddress[1] = 0xC008;
         bus->sizeAddress[1] = 8;
 
         pic = new PICWrapper("picWrapper");
@@ -199,7 +199,7 @@ public:
         pic->t_wr(t_wr[3]);
         pic->t_rd(t_rd[3]);
         pic->t_ready(t_ready[3]);
-        // Starting at 0x8010
+        // Starting at 0xC010 (right after old DMA, which occupies 0xC008-0xC00F)
         bus->t_cs[3](t_cs[3]);
         bus->t_addr[3](t_addr[3]);
         bus->t_in[3](t_in[3]);
@@ -208,7 +208,11 @@ public:
         bus->t_rd[3](t_rd[3]);
         bus->t_ready[3](t_ready[3]);
 
-        bus->startAddress[3] = 0x8010;
+        bus->startAddress[3] = 0xC010;
         bus->sizeAddress[3] = 1;
+
+        // NEXT FREE ADDRESS: 0xC011
+        // The FIR Accelerator and its dedicated DMA (Part 1/2/3) will be
+        // attached starting here, once their register maps are finalized.
     }
 };
