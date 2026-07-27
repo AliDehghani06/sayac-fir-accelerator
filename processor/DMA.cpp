@@ -8,7 +8,13 @@ SC_MODULE(DMA)
     sc_lv<16> fromAddress; // Address to copy from
     sc_lv<16> byteCount;   // Number of bytes to copy
     sc_lv<16> toAddress;   // Address to copy to
-    sc_lv<16> controlReg;  // ...|RD|WR|Start, WR : Mem -> MMA , RD : MMA -> Mem
+    sc_lv<16> controlReg;  // ...|target|RD|WR|Start
+                            //   bit0 = Start
+                            //   bit1 = WR
+                            //   bit2 = RD
+                            //   bit3 = target select (Phase 2 addition):
+                            //          0 = MMA (existing raw-signal path)
+                            //          1 = FIR (new sc_fifo path)
     sc_lv<16> statusReg;   // ...|RD Done|WR Done
 
     sc_in<sc_logic> clk;
@@ -23,7 +29,7 @@ SC_MODULE(DMA)
     sc_in<sc_logic> i_ready;
 
     // Config port
-    
+
     sc_in<sc_logic> t_cs;
     sc_in<sc_lv<16>> t_addr;
     sc_in<sc_lv<16>> t_in;
@@ -38,6 +44,10 @@ SC_MODULE(DMA)
     sc_in<sc_lv<16>> mmaOut;
     sc_out<sc_logic> mmaWR;
     sc_out<sc_logic> mmaRD;
+
+    // Signals between DMA and FIR
+    sc_fifo_out<sc_lv<16>> firDataIn;  // mem -> FIR
+    sc_fifo_in<sc_lv<16>> firDataOut;  // FIR -> mem
 
     // Interrupt to PIC
     sc_out<sc_logic> interrupt;
@@ -70,18 +80,22 @@ SC_MODULE(DMA)
                 if (t_addr.read().to_uint() == 0) // Address 0 => control register
                 {
                     controlReg = t_in;
+                    cout << "controlReg = " << controlReg << endl;
                 }
                 else if (t_addr.read().to_uint() == 1) // Address 1 => from register
                 {
                     fromAddress = t_in;
+                    cout << "fromAddress = " << fromAddress << endl;
                 }
                 else if (t_addr.read().to_uint() == 2) // Address 2 => to register
                 {
                     toAddress = t_in;
+                    cout << "toAddress = " << toAddress << endl;
                 }
                 else if (t_addr.read().to_uint() == 3) // Address 3 => size register
                 {
                     byteCount = t_in;
+                    cout << "byteCount = " << byteCount << endl;
                 }
 
             }
@@ -108,7 +122,7 @@ SC_MODULE(DMA)
                     t_out = statusReg;
                 }
             }
-             
+
             t_ready = sc_logic_1;
         }
     }
@@ -148,11 +162,13 @@ SC_MODULE(DMA)
             mmaWR = sc_logic_0;
             mmaRD = sc_logic_0;
 
+            bool toFIR = (controlReg[3] == '1');
+
             // For each byte do the transfer
             for (int addrOffset = 0; addrOffset < byteCount.to_uint(); addrOffset++)
             {
                 // cout << "dma : " <<  addrOffset << endl;
-                if (controlReg[1] == '1') //WR Write  Mem -> MMA
+                if (controlReg[1] == '1') //WR Write  Mem -> accelerator
                 {
                     // Set the memory address and control signals
                     i_addr = fromAddress.to_uint() + addrOffset;
@@ -168,25 +184,42 @@ SC_MODULE(DMA)
                     i_rd = sc_logic_0;
                     // Save the result
                     tempReg = i_in;
-                    // Set the destination address and control signals
-                    mmaAddr = toAddress.to_uint() + addrOffset;
-                    mmaRD = sc_logic_0;
-                    mmaWR = sc_logic_1;
-                    mmaIn = tempReg;
-                    // Write the data in one clock
-                    wait(clk->posedge_event());
-                 
+
+                    if (toFIR)
+                    {
+                        // Push data into FIR's input FIFO.
+                        firDataIn.write(tempReg);
+                    }
+                    else
+                    {
+                        // Set the destination address and control signals
+                        mmaAddr = toAddress.to_uint() + addrOffset;
+                        mmaRD = sc_logic_0;
+                        mmaWR = sc_logic_1;
+                        mmaIn = tempReg;
+                        // Write the data in one clock
+                        wait(clk->posedge_event());
+                    }
+
                 }
-                else if (controlReg[2] == '1') //RD Read MMA -> Mem
+                else if (controlReg[2] == '1') //RD Read accelerator -> Mem
                 {
-                    // Set the source address and control signals
-                    mmaAddr = fromAddress.to_uint() + addrOffset;
-                    mmaRD = sc_logic_1;
-                    mmaWR = sc_logic_0;
-                    // Read the data in one clock
-                    wait(clk->posedge_event());  
-                    wait(clk->posedge_event());  
-                    tempReg = mmaOut;
+                    if (toFIR)
+                    {
+                        // Pull data from FIR's output FIFO
+                        tempReg = firDataOut.read();
+                    }
+                    else
+                    {
+                        // Set the source address and control signals
+                        mmaAddr = fromAddress.to_uint() + addrOffset;
+                        mmaRD = sc_logic_1;
+                        mmaWR = sc_logic_0;
+                        // Read the data in one clock
+                        wait(clk->posedge_event());
+                        wait(clk->posedge_event());
+                        tempReg = mmaOut;
+                    }
 
                     // Set the memory destination address and control signals and data
                     i_addr = toAddress.to_uint() + addrOffset;
@@ -194,7 +227,7 @@ SC_MODULE(DMA)
                     i_rd = sc_logic_0;
                     i_out = tempReg;
 
-         
+
 
                     // Wait for operation to finish
                     do
@@ -204,7 +237,7 @@ SC_MODULE(DMA)
 
                     i_wr = sc_logic_0;
                     i_rd = sc_logic_0;
-                  
+
                 }
             }
 
@@ -212,11 +245,12 @@ SC_MODULE(DMA)
                 statusReg = 1; // If it was WR operation, set status to WR done
             else
                 statusReg = 2; // If it was RD operation, set status to RD done
-          
+
 
             // Issue interrupt for one clock
             interrupt = sc_logic_1;
             wait(clk->posedge_event());
+            cout<<"  DMA interrupt " << endl;
             interrupt = sc_logic_0;
         }
     }
