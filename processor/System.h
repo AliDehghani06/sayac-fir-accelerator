@@ -4,11 +4,11 @@
 #include "Memory.h"
 #include "DMA.cpp"
 #include "MatMulAcc.cpp"
+#include "FIR.h"
 #include "DummyProcessor.h"
-#include "PICWrapper.h"
-#include "SayacInterface.h"
+#include "PIC.h"
 
-#define NumberOfTargets 4
+#define NumberOfTargets 5
 #define NumberOfInitiators 2
 template <int N>
 SC_MODULE(EmbeddedSystem)
@@ -16,14 +16,15 @@ SC_MODULE(EmbeddedSystem)
 public:
     sc_in<sc_logic> clk;
 
+    sc_signal<sc_logic> zero_wire;
+
     Bus<N, NumberOfInitiators, NumberOfTargets> *bus;
     MatMulAcc<N> *mma;
     DMA *dma;
     Memory<N> *memory;
     DummyProcessor<N> *dp;
-    PICWrapper* pic;
-    SayacInterface* cpu;
-
+    PIC<N, 4> *pic;
+    FIRAcc<N> *fir;
 
     sc_signal<sc_lv<N>> i_addr[NumberOfInitiators];
     sc_signal<sc_lv<N>> i_in[NumberOfInitiators];
@@ -47,15 +48,22 @@ public:
     sc_signal<sc_logic> dmammaWR;
     sc_signal<sc_logic> dmammaRD;
 
+    // FIR <-> DMA data path: SystemC predefined FIFOs
+    sc_fifo<sc_lv<N>> memToFir;
+    sc_fifo<sc_lv<N>> firToMem;
+
     // PIC signals
     sc_signal<sc_logic> dmaInterrupt;
     sc_signal<sc_logic> mmaInterrupt;
+    sc_signal<sc_logic> firInterrupt;
     sc_signal<sc_logic> INTA_bar;
     sc_signal<sc_logic> INT;
-   
 
-    SC_CTOR(EmbeddedSystem)
+
+    SC_CTOR(EmbeddedSystem) : memToFir(600), firToMem(600)
     {
+        zero_wire = sc_logic_0;
+
         bus = new Bus<N, NumberOfInitiators, NumberOfTargets>("bus");
         bus->clk(clk);
 
@@ -76,28 +84,17 @@ public:
         bus->i_ready[1](i_ready[1]);
 
 
-        // dp = new DummyProcessor<N>("CPU");
-        // dp->clk(clk);
-        // dp->i_addr(i_addr[0]);
-        // dp->i_in(i_in[0]);
-        // dp->i_out(i_out[0]);
-        // dp->i_wr(i_wr[0]);
-        // dp->i_rd(i_rd[0]);
-        // dp->i_ready(i_ready[0]);
-        
+        dp = new DummyProcessor<N>("CPU");
+        dp->clk(clk);
+        dp->i_addr(i_addr[0]);
+        dp->i_in(i_in[0]);
+        dp->i_out(i_out[0]);
+        dp->i_wr(i_wr[0]);
+        dp->i_rd(i_rd[0]);
+        dp->i_ready(i_ready[0]);
+        dp->INT(INT);
+        dp->INTA_bar(INTA_bar);
 
-        cpu = new SayacInterface("CPU");
-        cpu->clk(clk);
-        cpu->i_addr(i_addr[0]);
-        cpu->i_in(i_in[0]);
-        cpu->i_out(i_out[0]);
-        cpu->i_wr(i_wr[0]);
-        cpu->i_rd(i_rd[0]);
-        cpu->i_ready(i_ready[0]);
-        cpu->INT(INT);
-        cpu->INTA_bar(INTA_bar);
-
-    
 
         memory = new Memory<N>("mem");
         memory->clk(clk);
@@ -116,8 +113,8 @@ public:
         bus->t_wr[2](t_wr[2]);
         bus->t_rd[2](t_rd[2]);
         bus->t_ready[2](t_ready[2]);
-        bus->startAddress[2] = 0x0000; //MMLocation
-        bus->sizeAddress[2] = 0xC000; //MMSize (49152 words: enough for the 0.5x upsample output, 2N-1 = 44099 words for N=22050 samples, plus margin)
+        bus->startAddress[2] = 0x0000;
+        bus->sizeAddress[2] = 0xC000;
 
         // MMA
         mma = new MatMulAcc<N>("mma");
@@ -136,7 +133,6 @@ public:
         mma->t_wr(t_wr[0]);
         mma->t_rd(t_rd[0]);
         mma->t_ready(t_ready[0]);
-        // Starting at 0xC000 (right after RAM, which now ends at 0xBFFF)
         bus->t_cs[0](t_cs[0]);
         bus->t_addr[0](t_addr[0]);
         bus->t_in[0](t_in[0]);
@@ -146,7 +142,7 @@ public:
         bus->t_ready[0](t_ready[0]);
 
         bus->startAddress[0] = 0xC000;
-        bus->sizeAddress[0] = 8; 
+        bus->sizeAddress[0] = 8;
 
         // DMA
         dma = new DMA("dma");
@@ -173,7 +169,10 @@ public:
         dma->t_wr(t_wr[1]);
         dma->t_rd(t_rd[1]);
         dma->t_ready(t_ready[1]);
-        // Starting at 0xC008 (right after MatMulAcc, which occupies 0xC000-0xC007)
+
+        dma->firDataIn(memToFir);
+        dma->firDataOut(firToMem);
+
         bus->t_cs[1](t_cs[1]);
         bus->t_addr[1](t_addr[1]);
         bus->t_in[1](t_in[1]);
@@ -185,12 +184,14 @@ public:
         bus->startAddress[1] = 0xC008;
         bus->sizeAddress[1] = 8;
 
-        pic = new PICWrapper("picWrapper");
+        pic = new PIC<N, 4>("pic");
         pic->clk(clk);
         pic->INTA_bar(INTA_bar);
         pic->INT(INT);
-        pic->dmaInterrupt(dmaInterrupt);
-        pic->mmaInterrupt(mmaInterrupt);
+        pic->interrupts[0](dmaInterrupt);
+        pic->interrupts[1](mmaInterrupt);
+        pic->interrupts[2](firInterrupt);
+        pic->interrupts[3](zero_wire);
 
         pic->t_cs(t_cs[3]);
         pic->t_addr(t_addr[3]);
@@ -199,7 +200,6 @@ public:
         pic->t_wr(t_wr[3]);
         pic->t_rd(t_rd[3]);
         pic->t_ready(t_ready[3]);
-        // Starting at 0xC010 (right after old DMA, which occupies 0xC008-0xC00F)
         bus->t_cs[3](t_cs[3]);
         bus->t_addr[3](t_addr[3]);
         bus->t_in[3](t_in[3]);
@@ -209,10 +209,30 @@ public:
         bus->t_ready[3](t_ready[3]);
 
         bus->startAddress[3] = 0xC010;
-        bus->sizeAddress[3] = 1;
+        bus->sizeAddress[3] = 5;
 
-        // NEXT FREE ADDRESS: 0xC011
-        // The FIR Accelerator and its dedicated DMA (Part 1/2/3) will be
-        // attached starting here, once their register maps are finalized.
+        fir = new FIRAcc<N>("fir");
+        fir->clk(clk);
+        fir->interrupt(firInterrupt);
+        fir->dataIn(memToFir);
+        fir->dataOut(firToMem);
+
+        fir->t_cs(t_cs[4]);
+        fir->t_addr(t_addr[4]);
+        fir->t_in(t_in[4]);
+        fir->t_out(t_out[4]);
+        fir->t_wr(t_wr[4]);
+        fir->t_rd(t_rd[4]);
+        fir->t_ready(t_ready[4]);
+        bus->t_cs[4](t_cs[4]);
+        bus->t_addr[4](t_addr[4]);
+        bus->t_in[4](t_in[4]);
+        bus->t_out[4](t_out[4]);
+        bus->t_wr[4](t_wr[4]);
+        bus->t_rd[4](t_rd[4]);
+        bus->t_ready[4](t_ready[4]);
+
+        bus->startAddress[4] = 0xC015;
+        bus->sizeAddress[4] = 34;
     }
 };

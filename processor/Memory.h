@@ -5,14 +5,13 @@
 #include "Bus.h"
 
 
-// TODO : Rewrite initializing mechanism
 template <int N>
 SC_MODULE(Memory)
 {
-	int DebugON;
-	int Loading;
-	int StartingLocation;
-	int PuttingData;
+	int DebugON = 0;
+	int Loading = 1;
+	int StartingLocation = 0;
+	int PuttingData = 0;
 	std::string file;
 
 	sc_in<sc_logic> clk;
@@ -28,6 +27,8 @@ SC_MODULE(Memory)
 	int memRange;
 	sc_lv<N> *mem;
 
+
+
 	SC_CTOR(Memory)
 	{
 
@@ -38,107 +39,86 @@ SC_MODULE(Memory)
 		SC_METHOD(readMem);
 		sensitive << t_addr << t_cs << t_rd;
 		SC_METHOD(writeMem);
-		sensitive << clk.pos();
+		sensitive << clk.pos()<< t_wr;
 		SC_THREAD(dump);
-		SC_THREAD(setMemReady);
+		SC_METHOD(setMemReady);
 		sensitive << t_addr << t_cs << t_rd << t_wr;
 	}
-	void init()
-	{
-		
+	void init() {
 		int i = 0;
 		sc_lv<N> data;
-		ifstream initFile;
-		ifstream initFileLoad;
-		ifstream PutAddr;
-		ifstream PutData;
-		initFile.open("binfile.txt");
-		initFileLoad.open(file);
-		PutAddr.open("addr.txt");
-		for(int i = 0 ;i<memRange;i++){
-			mem[i] = 0;
-		}
-		PutData.open("data.txt");
-		cout << "starting location: " << StartingLocation << endl;
-		if (Loading)
-		{
-			
+		std::string str_data;
+
+		std::ifstream initFile("default_meminit.txt");
+	
+		std::ifstream initFileLoad;
+		std::ifstream PutAddr("addr.txt");
+		std::ifstream PutData("data.txt");
+		file = "mem.txt";
+		
+		if (Loading ) {
+			//std::cout << "file = [" << file << "]" << std::endl;
+
+			initFileLoad.open(file);
+			if (!initFileLoad.is_open()) {
+				std::cerr << "[ERROR] Cannot open file: " << file << std::endl;
+				return;
+			}
+
 			int count = 0;
-
-			while (!(initFileLoad.eof()))
-			{
-				i = 0;
-				if (i < memRange)
-				{
-					if (count == StartingLocation)
-					{
-
-						initFileLoad >> data;
-						mem[i] = data;
-						//	cout << "data is  " << mem[i] << endl;
-						i++;
+			while (getline(initFileLoad, str_data)) {
+				if (!str_data.empty()) {
+					if (count >= StartingLocation && i < memRange) {
+						data = sc_lv<N>(str_data.c_str());
+						mem[i++] = data;
 					}
-					else
-					{
-						initFileLoad >> data;
-						count++;
-					}
+					count++;
 				}
 			}
 			initFileLoad.close();
-			if (DebugON)
-			{
-				cout << "Loading to MEM *************************************************************\n";
+			if (DebugON) {
+				std::cout << "[MEM] Loaded memory from file: " << file << std::endl;
 			}
 		}
 
-		if (PuttingData)
-		{
-
-			int addr;
-			std::string addr_s, data_s;
-			int data_i;
-			while (getline(PutAddr, addr_s))
-			{
-				i = 0;
-				if (i < memRange)
-				{
-
-					PutData >> data;
-					addr = std::stoi(addr_s);
-					mem[addr] = data;
-					//	cout << "addr and data is: "<< addr<<"  "<<mem[addr]<<endl;
-
-					i++;
+		
+		else if (PuttingData) {
+			std::string addr_str, data_str;
+			while (getline(PutAddr, addr_str) && getline(PutData, data_str)) {
+				if (!addr_str.empty() && !data_str.empty()) {
+					int addr = std::stoi(addr_str);
+					if (addr < memRange) {
+						data = sc_lv<N>(data_str.c_str());
+						mem[addr] = data;
+						std::cout << "[MEM] OK. addr = " << addr <<" , data = " << data << std::endl;
+					}
 				}
 			}
-
 			PutAddr.close();
 			PutData.close();
-			if (DebugON)
-			{
-				cout << "Putting Data to MEM *************************************************************\n";
+			if (DebugON) {
+				std::cout << "[MEM] Put data from addr.txt and data.txt" << std::endl;
 			}
 		}
 
-		else if (!(Loading) && !(PuttingData))
-		{
-			cout << "wow" << endl;
-			int count = 0;
-			while (!(initFile.eof()))
-			{
-				if (i < memRange)
-				{
-
-					initFile >> data;
-					mem[i] = data;
-					// cout << "data is  " << mem[i] << endl;
-					i++;
+		else {
+			if (!initFile.is_open()) {
+				std::cerr << "[ERROR] Cannot open default init file!" << std::endl;
+				return;
+			}
+			while (getline(initFile, str_data)) {
+				if (!str_data.empty() && i < memRange) {
+					data = sc_lv<N>(str_data.c_str());
+					mem[i++] = data;
 				}
 			}
 			initFile.close();
+			if (DebugON) {
+				std::cout << "[MEM] Initialized memory from default file" << std::endl;
+			}
 		}
 	}
+
 
 	void readMem()
 	{
@@ -168,6 +148,7 @@ SC_MODULE(Memory)
 				if (t_wr == '1')
 				{
 					mem[tempAd.to_uint()] = t_in;
+					cout<< "[Memory] mem["<< tempAd.to_uint() << "] = "<< mem[tempAd.to_uint()] << endl;
 				}
 			}
 		}
@@ -175,7 +156,7 @@ SC_MODULE(Memory)
 	void dump()
 	{
 		ofstream out;
-		wait(30, SC_NS);
+		wait(9999, SC_NS);
 		out.open("dump.txt");
 		for (int i = 0; i < memRange; i++)
 		{
@@ -185,26 +166,22 @@ SC_MODULE(Memory)
 	}
 	void setMemReady()
 	{
-		while(1){
-			wait();
-			sc_lv<N> tempAd;
-			t_ready = SC_LOGIC_0;
-			// cout << "ready Ready is " << ready << "\n";
-			if (t_cs == '1')
+		sc_lv<N> tempAd;
+		t_ready = SC_LOGIC_0;
+		// cout << "ready Ready is " << ready << "\n";
+		if (t_cs == '1')
+		{
+			tempAd = t_addr;
+			if (tempAd.to_uint() < memRange)
 			{
-				tempAd = t_addr;
-				if (tempAd.to_uint() < memRange)
+				if (t_wr == '1' || t_rd == '1')
 				{
-					if (t_wr == '1' || t_rd == '1')
-					{
-						for (int i = 0; i < 6; i++)
-						{
-							wait(clk->posedge_event());
-						}
-						t_ready = SC_LOGIC_1;
-					}
+					t_ready = SC_LOGIC_1;
+					//std::cout << "t_ready   ;sljkfsajjkjjjjkkjjkljkljkjkljkljkljkljkljkljkl = " << endl;
 				}
 			}
 		}
+		
+		//std::cout << "t_ready = "<< t_ready.read()<< ", t_wr =  " << t_wr.read() <<", t_rd = "<< t_rd.read() << std::endl;
 	}
 };
