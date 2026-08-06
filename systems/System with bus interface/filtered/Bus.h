@@ -135,7 +135,8 @@ public:
             {
                 if (gntsOred == '1' && addressBus.read().to_uint() >= startAddress[i].to_uint() && addressBus.read().to_uint() < startAddress[i].to_uint() + sizeAddress[i].to_uint())
                 {
-                    
+                    cout << "addressBus = " << addressBus.read() << ", startAddress[i]= " << startAddress[i] << endl;
+                    cout << "currenttarget = " << currenttarget << endl;
                     currenttarget = i;
                     break;
                 }

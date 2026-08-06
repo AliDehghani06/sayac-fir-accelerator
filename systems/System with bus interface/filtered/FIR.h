@@ -3,11 +3,11 @@
 #include <vector>
 #include "Bus.h"
 
-// Register map:
-//   0        control   : bit0 = START.
-//   1        status    : bit0 = DONE.
-//   2        chunkSize : number of valid samples in the chunk.
-//   3..33    coeff[0..30] : the 31 FIR tap coefficients.
+//Register map:
+//0 : control   : bit0 = START
+//1 : status    : bit0 = DONE
+//2 : chunkSize : number of samples in the chunk
+//3..33 : coeff[0..30] : the 31 FIR tap coefficients
 
 template <int N>
 SC_MODULE(FIRAcc)
@@ -17,6 +17,7 @@ SC_MODULE(FIRAcc)
 
     sc_in<sc_logic> clk;
 
+    // Config/target port
     sc_in<sc_logic> t_cs;
     sc_in<sc_lv<N>> t_addr;
     sc_in<sc_lv<N>> t_in;
@@ -28,8 +29,9 @@ SC_MODULE(FIRAcc)
     // Interrupt to PIC
     sc_out<sc_logic> interrupt;
 
-    sc_fifo_in<sc_lv<N>> dataIn;   // samples in, pushed by the DMA
-    sc_fifo_out<sc_lv<N>> dataOut; // filtered samples out, pulled by the DMA
+    // Predefined FIFO channels
+    sc_fifo_in<sc_lv<N>> dataIn;
+    sc_fifo_out<sc_lv<N>> dataOut;
 
     // Registers
     sc_lv<16> controlReg;
@@ -47,7 +49,7 @@ SC_MODULE(FIRAcc)
         for (int i = 0; i < TAPS; i++)
             coeffs[i] = 0;
         for (int i = 0; i < TAPS - 1; i++)
-            history[i] = 0; // zero history before the very first chunk
+            history[i] = 0; // zero history before the first chunk
 
         SC_THREAD(evalConfigReg);
         sensitive << clk;
@@ -68,19 +70,19 @@ SC_MODULE(FIRAcc)
             t_out = 0;
             t_ready = sc_logic_0;
 
-            if (t_wr == '1')
+            if (t_wr == '1') // Write
             {
                 wait(clk->posedge_event());
                 int addr = t_addr.read().to_uint();
-                if (addr == 0)
+                if (addr == 0) // control register
                 {
                     controlReg = t_in;
                 }
-                else if (addr == 2)
+                else if (addr == 2) // chunk size register
                 {
                     chunkSizeReg = t_in;
                 }
-                else if (addr >= 3 && addr < 3 + TAPS)
+                else if (addr >= 3 && addr < 3 + TAPS) // coeff
                 {
                     coeffs[addr - 3] = t_in.read().to_int();
                 }
@@ -133,6 +135,7 @@ SC_MODULE(FIRAcc)
 
             cout << "FIR: starting chunk of " << len << " sample" << endl;
 
+            // Pull the chunk from the input FIFO (blocking get, per word)
             std::vector<int16_t> chunk(len);
             for (int i = 0; i < len; i++)
                 chunk[i] = dataIn.read().to_int();
@@ -160,6 +163,7 @@ SC_MODULE(FIRAcc)
                 yChunk[n] = (int16_t)acc;
             }
 
+            // Push results to the output FIFO
             for (int i = 0; i < len; i++)
             {
                 sc_lv<N> word;
@@ -167,12 +171,14 @@ SC_MODULE(FIRAcc)
                 dataOut.write(word);
             }
 
+            // Update history
             for (int i = 0; i < TAPS - 1; i++)
                 history[i] = ext[(int)ext.size() - (TAPS - 1) + i];
 
-            statusReg = 1;
+            statusReg = 1; // done
             cout << "FIR: chunk done, interrupting" << endl;
 
+            // Issue interrupt for one clock
             interrupt = sc_logic_1;
             wait(clk->posedge_event());
             interrupt = sc_logic_0;

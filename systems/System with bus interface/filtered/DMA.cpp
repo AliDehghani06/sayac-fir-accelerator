@@ -10,11 +10,11 @@ SC_MODULE(DMA)
     sc_lv<16> toAddress;   // Address to copy to
     sc_lv<16> controlReg;  // ...|target|RD|WR|Start
                             //   bit0 = Start
-                            //   bit1 = WR
-                            //   bit2 = RD
-                            //   bit3 = target select (Phase 2 addition):
-                            //          0 = MMA (existing raw-signal path)
-                            //          1 = FIR (new sc_fifo path)
+                            //   bit1 = WR : Mem -> accelerator
+                            //   bit2 = RD : accelerator -> Mem
+                            //   bit3 = target select:
+                            //          0 = MMA
+                            //          1 = FIR
     sc_lv<16> statusReg;   // ...|RD Done|WR Done
 
     sc_in<sc_logic> clk;
@@ -46,8 +46,8 @@ SC_MODULE(DMA)
     sc_out<sc_logic> mmaRD;
 
     // Signals between DMA and FIR
-    sc_fifo_out<sc_lv<16>> firDataIn;  // mem -> FIR
-    sc_fifo_in<sc_lv<16>> firDataOut;  // FIR -> mem
+    sc_fifo_out<sc_lv<16>> firDataIn;  // DMA pushes into FIR's input FIFO  (mem -> FIR)
+    sc_fifo_in<sc_lv<16>> firDataOut;  // DMA pulls from FIR's output FIFO (FIR -> mem)
 
     // Interrupt to PIC
     sc_out<sc_logic> interrupt;
@@ -162,6 +162,7 @@ SC_MODULE(DMA)
             mmaWR = sc_logic_0;
             mmaRD = sc_logic_0;
 
+            // Check FIR is the target
             bool toFIR = (controlReg[3] == '1');
 
             // For each byte do the transfer
@@ -187,7 +188,7 @@ SC_MODULE(DMA)
 
                     if (toFIR)
                     {
-                        // Push data into FIR's input FIFO.
+                        // Push into FIR's input FIFO
                         firDataIn.write(tempReg);
                     }
                     else
@@ -206,7 +207,7 @@ SC_MODULE(DMA)
                 {
                     if (toFIR)
                     {
-                        // Pull data from FIR's output FIFO
+                        // Pull from FIR's output FIFO
                         tempReg = firDataOut.read();
                     }
                     else

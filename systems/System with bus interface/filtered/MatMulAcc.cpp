@@ -4,7 +4,7 @@
 template <int N>
 SC_MODULE(MatMulAcc)
 {
-    const int MAX_SIZE = (1 << N);
+    const int MAX_SIZE = (1 << 4);
     // mat1 : n*k
     // mat2 : k*m
     // TODO : Change to use one buffer for all
@@ -72,7 +72,7 @@ SC_MODULE(MatMulAcc)
     {
         while (true)
         {
-            
+            cout << "MAX_SIZE = " << MAX_SIZE << endl;
             t_ready = sc_logic_1;
             // Wait for CS
             do
@@ -87,18 +87,22 @@ SC_MODULE(MatMulAcc)
                 if (t_addr.read().to_uint() == 0) // Address 0 => control register
                 {
                     controlReg = t_in;
+                    cout << "controlReg = " << controlReg << endl;
                 }
                 else if (t_addr.read().to_uint() == 1) // Address 1 => n register
                 {
                     n = t_in;
+                    cout << "n = " << n << endl;
                 }
                 else if (t_addr.read().to_uint() == 2) // Address 2 => k register
                 {
                     k = t_in;
+                    cout << "k = " << k << endl;
                 }
                 else if (t_addr.read().to_uint() == 3) // Address 3 => m register
                 {
                     m = t_in;
+                    cout << "m = " << m << endl;
                 }
   
             }
@@ -154,6 +158,7 @@ SC_MODULE(MatMulAcc)
                 //else if (localAddress >= MAX_SIZE && localAddress < 2 * MAX_SIZE) // Mat2 being addressed
                 //    mat2[localAddress - MAX_SIZE] = dmaIn.read().to_int();
                 buff[localAddress] = dmaIn.read().to_int();
+                cout<< "buff[" << localAddress <<"] = "<< buff[localAddress] <<endl;
             }
         }
     }
@@ -202,6 +207,8 @@ SC_MODULE(MatMulAcc)
                     {
                         // MAC operation
                         sum += buff[x * k.to_uint() + z] * buff[mat1Size + m.to_uint() * z + y];
+                        cout << "buff[ " << x * k.to_uint() + z << " ] = " << buff[x * k.to_uint() + z] << ", buff[ " << mat1Size + m.to_uint() * z + y << "] = " << buff[mat1Size + m.to_uint() * z + y] << endl;
+                        cout << "sum = "<< sum  <<endl;
                         // Wait a clock, assuming each MAC operation takes one clock to complete.
                         wait(clk->posedge_event());
                     }

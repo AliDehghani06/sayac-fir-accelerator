@@ -5,7 +5,7 @@
 #include "DMA.cpp"
 #include "MatMulAcc.cpp"
 #include "FIR.h"
-#include "DummyProcessor.h"
+#include "DummyProcessor_Filter.h"
 #include "PIC.h"
 
 #define NumberOfTargets 5

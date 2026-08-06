@@ -57,7 +57,6 @@ SC_MODULE(Memory)
 		file = "mem.txt";
 		
 		if (Loading ) {
-			//std::cout << "file = [" << file << "]" << std::endl;
 
 			initFileLoad.open(file);
 			if (!initFileLoad.is_open()) {
@@ -156,7 +155,7 @@ SC_MODULE(Memory)
 	void dump()
 	{
 		ofstream out;
-		wait(9999, SC_NS);
+		wait(19999999, SC_NS);
 		out.open("dump.txt");
 		for (int i = 0; i < memRange; i++)
 		{
@@ -177,11 +176,9 @@ SC_MODULE(Memory)
 				if (t_wr == '1' || t_rd == '1')
 				{
 					t_ready = SC_LOGIC_1;
-					//std::cout << "t_ready   ;sljkfsajjkjjjjkkjjkljkljkjkljkljkljkljkljkljkl = " << endl;
 				}
 			}
 		}
 		
-		//std::cout << "t_ready = "<< t_ready.read()<< ", t_wr =  " << t_wr.read() <<", t_rd = "<< t_rd.read() << std::endl;
 	}
 };
